@@ -158,7 +158,7 @@ export async function createInitialHelpMenu(client) {
     );
 
     embed.setFooter({ 
-        text: "Made with ❤️" 
+        text: "Creator: NilaBillaBloxYT" 
     });
     embed.setTimestamp();
 
@@ -174,7 +174,7 @@ export async function createInitialHelpMenu(client) {
 
     const touchpointButton = new ButtonBuilder()
         .setLabel("Creator Channel")
-        .setURL("https://www.youtube.com/@NilaBillaBloxYT")
+        .setURL("https://www.youtube.com/@NilaBilla_BloxYT")
         .setStyle(ButtonStyle.Link);
 
     const selectRow = createSelectMenu(
