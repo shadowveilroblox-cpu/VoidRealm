@@ -10,6 +10,7 @@ export class PokemonGame {
             { name: "Pikachu", emojis: "⚡+🐱" },
             { name: "Squirtle", emojis: "💧+🐢" },
             { name: "Charmander", emojis: "🔥+🦎" }
+            { name: "Dragon Canelloni", emojis: "🎍+🐉" }
         ];
     }
 
@@ -29,7 +30,7 @@ export class PokemonGame {
         await this.channel.send(`<@${player.id}>, guess this Pokémon: ${pokemon.emojis}`);
 
         const filter = (m) => true; // Listen to everyone to catch cheaters
-        const collector = this.channel.createMessageCollector({ filter, time: 5000 });
+        const collector = this.channel.createMessageCollector({ filter, time: 10000 });
 
         collector.on('collect', async (m) => {
             if (m.author.id === player.id) {
