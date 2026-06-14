@@ -1,39 +1,15 @@
-import { SlashCommandBuilder, PermissionFlagsBits, ComponentType } from 'discord.js';
-import { InteractionHelper } from '../../utils/interactionHelper.js';
-import { successEmbed } from '../../utils/embeds.js';
+// Inside your command execution:
+const participants = Array.from(participantsMap.values());
 
-const activeGames = new Map();
+const pokemonList = [
+    { name: "Pikachu", emojis: "⚡+🐱" },
+    { name: "Squirtle", emojis: "💧+🐢" },
+    { name: "Charmander", emojis: "🔥+🦎" }
+];
 
-export default {
-    data: new SlashCommandBuilder()
-        .setName("pokemon")
-        .setDescription("Start a Pokémon guessing game")
-        .addStringOption(o => o.setName("prize").setDescription("The winner's prize").setRequired(true))
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-    category: 'Fun',
-
-    async execute(interaction) {
-        const prize = interaction.options.getString("prize");
-        const msg = await interaction.reply({ 
-            content: "Game Starting in 30s! React ✅ to participate.", 
-            fetchReply: true 
-        });
-        
-        await msg.react('✅');
-        
-        // Wait for participants
-        setTimeout(async () => {
-            const reaction = msg.reactions.cache.get('✅');
-            const participants = (await reaction.users.fetch()).filter(u => !u.bot);
-            
-            if (participants.size < 1) return interaction.followUp("Not enough players!");
-
-            activeGames.set(interaction.channelId, { 
-                participants: participants, 
-                prize, 
-                index: 0 
-            });
-
+await interaction.followUp("Game Started! Taking turns...");
+await runRound(interaction.channel, participants, pokemonList);
+await interaction.followUp("Game Over!");
             await interaction.followUp(`Game started with ${participants.size} players! Prize: ${prize}`);
             runRound(interaction.channel, participants);
         }, 30000);
