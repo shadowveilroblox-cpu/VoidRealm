@@ -1,39 +1,29 @@
-// Inside your command execution:
-const participants = Array.from(participantsMap.values());
+import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
+import { PokemonGame } from '../../services/pokemonGame.js';
 
-const pokemonList = [
-    { name: "Pikachu", emojis: "⚡+🐱" },
-    { name: "Squirtle", emojis: "💧+🐢" },
-    { name: "Charmander", emojis: "🔥+🦎" }
-];
+export default {
+    data: new SlashCommandBuilder()
+        .setName("pokemon")
+        .setDescription("Start a Pokémon turn-based game")
+        .addStringOption(o => o.setName("prize").setDescription("Winner's prize").setRequired(true))
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
-await interaction.followUp("Game Started! Taking turns...");
-await runRound(interaction.channel, participants, pokemonList);
-await interaction.followUp("Game Over!");
-            await interaction.followUp(`Game started with ${participants.size} players! Prize: ${prize}`);
-            runRound(interaction.channel, participants);
-        }, 30000);
+    async execute(interaction) {
+        const msg = await interaction.reply({ content: "Game starting in 30s! React ✅ to participate.", fetchReply: true });
+        await msg.react('✅');
+
+        const collector = msg.createReactionCollector({ time: 30000 });
+        collector.on('end', async () => {
+            const reaction = msg.reactions.cache.get('✅');
+            const users = (await reaction.users.fetch()).filter(u => !u.bot);
+            
+            if (users.size === 0) return interaction.followUp("No players joined!");
+
+            const game = new PokemonGame(interaction.channel, Array.from(users.values()), interaction.options.getString("prize"));
+            game.start();
+        });
     }
 };
-
-async function runRound(channel, participants) {
-    // Logic to pick a random Pokemon emoji or image
-    const pokemon = "PIKACHU ⚡"; // Example
-    await channel.send(`Who's that Pokemon? You have 5s! (Hint: ${pokemon})`);
-    
-    // Create collector for 5 seconds
-    const filter = m => participants.has(m.author.id);
-    const collector = channel.createMessageCollector({ filter, time: 5000, max: 1 });
-
-    collector.on('collect', m => {
-        if (m.content.toLowerCase() === "pikachu") {
-            channel.send(`Correct! ${m.author.username} wins this round.`);
-            // Trigger next round...
-        }
-    });
-
-    collector.on('end', collected => {
-        if (collected.size === 0) channel.send("Time's up! No one guessed it.");
     });
           }
               
