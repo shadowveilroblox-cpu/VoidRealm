@@ -16,8 +16,8 @@ export default {
     try {
         const { guild, user } = member;
         
+        // --- Existing Goodbye Logic ---
         const welcomeConfig = await getWelcomeConfig(member.client, guild.id);
-        
         const goodbyeChannelId = welcomeConfig?.goodbyeChannelId;
 
         if (welcomeConfig?.goodbyeEnabled && goodbyeChannelId) {
@@ -25,15 +25,25 @@ export default {
             if (channel?.isTextBased?.()) {
                 const me = guild.members.me;
                 const permissions = me ? channel.permissionsFor(me) : null;
-                if (!permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) {
-                    return;
+                if (permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) {
+                    const formatData = { user, guild, member };
+                    const goodbyeMessage = formatWelcomeMessage(
+                        welcomeConfig.leaveMessage || welcomeConfig.leaveEmbed?.description || '{user.tag} has left the server.',
+                        formatData
+                    );
+                    await channel.send(goodbyeMessage);
                 }
+            }
+        }
 
-                const formatData = { user, guild, member };
-                const goodbyeMessage = formatWelcomeMessage(
-                    welcomeConfig.leaveMessage || welcomeConfig.leaveEmbed?.description || '{user.tag} has left the server.',
-                    formatData
-                );
+        // --- NEW AUDIT LOG INTEGRATION ---
+        await logEvent(guild, "Member Left", `User **${user.tag}** (ID: ${user.id}) has left the server.`, member.client);
+        
+    } catch (error) {
+        logger.error('Error in GuildMemberRemove event:', error);
+    }
+  }
+};
 
                 const embedTitle = formatWelcomeMessage(
                     welcomeConfig.leaveEmbed?.title || '👋 Goodbye',
