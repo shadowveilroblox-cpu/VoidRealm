@@ -1,39 +1,147 @@
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { TitanBotError, ErrorTypes } from '../utils/errorHandler.js';
 import { getColor } from '../config/bot.js';
-import { getEndedGiveaways, markGiveawayEnded } from '../utils/database.js';
+import { markGiveawayEnded } from '../utils/database.js';
 import { logEvent, EVENT_TYPES } from './loggingService.js';
 
-
+// --- Interaction Caching for Rate Limiting ---
 const userGiveawayInteractions = new Map();
 const GIVEAWAY_INTERACTION_COOLDOWN = 1000; 
 const GIVEAWAY_INTERACTION_TTL = 5 * 60 * 1000; 
 const GIVEAWAY_INTERACTION_MAX_ENTRIES = 5000;
-const GIVEAWAY_INTERACTION_CLEANUP_INTERVAL = 60 * 1000;
 let lastInteractionCleanupAt = 0;
 
 function cleanupInteractionCache(force = false) {
     const now = Date.now();
-    if (!force && (now - lastInteractionCleanupAt) < GIVEAWAY_INTERACTION_CLEANUP_INTERVAL) {
-        return;
-    }
-
+    if (!force && (now - lastInteractionCleanupAt) < 60 * 1000) return;
     lastInteractionCleanupAt = now;
     const cutoff = now - GIVEAWAY_INTERACTION_TTL;
     for (const [key, timestamp] of userGiveawayInteractions.entries()) {
-        if (timestamp < cutoff) {
-            userGiveawayInteractions.delete(key);
-        }
+        if (timestamp < cutoff) userGiveawayInteractions.delete(key);
     }
-
-    while (userGiveawayInteractions.size > GIVEAWAY_INTERACTION_MAX_ENTRIES) {
+    if (userGiveawayInteractions.size > GIVEAWAY_INTERACTION_MAX_ENTRIES) {
         const oldestKey = userGiveawayInteractions.keys().next().value;
-        if (!oldestKey) break;
         userGiveawayInteractions.delete(oldestKey);
     }
 }
 
+// --- Logic Functions ---
+
+export function parseDuration(durationString) {
+    const regex = /^(\d+)([hmds])$/i;
+    const match = durationString?.trim().match(regex);
+    if (!match) throw new TitanBotError('Invalid duration format', ErrorTypes.VALIDATION, 'Use: 1h, 30m, 5d, 10s.');
+    
+    const amount = parseInt(match[1], 10);
+    const unit = match[2].toLowerCase();
+    const multipliers = { s: 1000, m: 60000, h: 3600000, d: 86400000 };
+    const ms = amount * multipliers[unit];
+
+    if (ms < 10000 || ms > 30 * 24 * 60 * 60 * 1000) {
+        throw new TitanBotError('Duration out of range', ErrorTypes.VALIDATION, 'Must be between 10s and 30d.');
+    }
+    return ms;
+}
+
+export function validatePrize(prize) {
+    const trimmed = prize?.trim();
+    if (!trimmed || trimmed.length > 256) throw new TitanBotError('Invalid prize', ErrorTypes.VALIDATION, 'Prize must be 1-256 chars.');
+    return trimmed;
+}
+
+export function validateWinnerCount(winnerCount) {
+    if (!Number.isInteger(winnerCount) || winnerCount < 1 || winnerCount > 10) {
+        throw new TitanBotError('Invalid winner count', ErrorTypes.VALIDATION, 'Must be between 1 and 10.');
+    }
+}
+
+export function selectWinners(participants, winnerCount) {
+    if (!Array.isArray(participants) || participants.length === 0) return [];
+    const unique = [...new Set(participants)];
+    const shuffled = [...unique].sort(() => 0.5 - Math.random());
+    return shuffled.slice(0, Math.min(winnerCount, unique.length));
+}
+
+export function createGiveawayEmbed(giveaway, status, winners = []) {
+    const isEnded = status === 'ended' || status === 'reroll';
+    const embed = new EmbedBuilder()
+        .setTitle(`${status === 'ended' ? '🎉' : '🔄'} ${giveaway.prize}`)
+        .setColor(isEnded ? getColor('giveaway.ended') : getColor('giveaway.active'))
+        .addFields(
+            { name: '👤 Hosted by', value: `<@${giveaway.hostId}>`, inline: true },
+            { name: '🏆 Winners', value: giveaway.winnerCount.toString(), inline: true },
+            { name: '👥 Entries', value: (giveaway.participants?.length || 0).toString(), inline: true }
+        );
+
+    if (isEnded) {
+        embed.addFields({ name: '🎯 Winners', value: winners.length ? winners.map(id => `<@${id}>`).join(', ') : 'No valid entries' });
+    } else {
+        embed.addFields({ name: '⏰ Ends', value: `<t:${Math.floor((giveaway.endsAt || giveaway.endTime) / 1000)}:R>` });
+    }
+    return embed.setTimestamp();
+}
+
+export function createGiveawayButtons(ended = false) {
+    const row = new ActionRowBuilder();
+    if (ended) {
+        row.addComponents(
+            new ButtonBuilder().setCustomId('giveaway_reroll').setLabel('🎲 Reroll').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('giveaway_view').setLabel('👁️ View Winners').setStyle(ButtonStyle.Primary)
+        );
+    } else {
+        row.addComponents(
+            new ButtonBuilder().setCustomId('giveaway_join').setLabel('🎉 Join').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId('giveaway_end').setLabel('🛑 End').setStyle(ButtonStyle.Danger)
+        );
+    }
+    return row;
+}
+
+// --- Interaction Helpers ---
+
+export function isUserRateLimited(userId, giveawayId) {
+    cleanupInteractionCache();
+    const last = userGiveawayInteractions.get(`${userId}:${giveawayId}`);
+    return last ? (Date.now() - last) < GIVEAWAY_INTERACTION_COOLDOWN : false;
+}
+
+export function recordUserInteraction(userId, giveawayId) {
+    userGiveawayInteractions.set(`${userId}:${giveawayId}`, Date.now());
+}
+
+// --- Core Logic ---
+
+export async function checkGiveaways(client) {
+    const endedGiveaways = await getEndedGiveaways(client);
+    for (const record of endedGiveaways) {
+        const giveaway = typeof record.data === 'string' ? JSON.parse(record.data) : record.data;
+        const channel = await client.channels.fetch(giveaway.channelId).catch(() => null);
+        const message = await channel?.messages.fetch(record.message_id).catch(() => null);
+        if (!message) continue;
+
+        const winners = selectWinners(giveaway.participants || [], giveaway.winnerCount);
+        
+        // Update Embed
+        await message.edit({ embeds: [createGiveawayEmbed(giveaway, 'ended', winners)], components: [createGiveawayButtons(true)] });
+
+        // Finalize Data
+        giveaway.ended = true;
+        giveaway.isEnded = true;
+        giveaway.winnerIds = winners;
+        giveaway.endedAt = new Date().toISOString();
+
+        if (winners.length > 0) {
+            const msg = await channel.send(`🎉 Congratulations ${winners.map(id => `<@${id}>`).join(', ')}! You won the **${giveaway.prize}**!`);
+            giveaway.winnerPingMessageId = msg.id;
+        } else {
+            await channel.send(`The giveaway for **${giveaway.prize}** ended with no entries.`);
+        }
+
+        await markGiveawayEnded(client, record.id, giveaway);
+        await logEvent({ client, guildId: record.guild_id, eventType: EVENT_TYPES.GIVEAWAY_WINNER, data: { ...giveaway } });
+    }
+}
 
 
 
